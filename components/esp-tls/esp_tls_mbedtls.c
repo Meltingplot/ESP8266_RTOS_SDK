@@ -270,8 +270,14 @@ static esp_err_t set_pki_context(esp_tls_t *tls, const esp_tls_pki_t *pki)
             return ESP_ERR_MBEDTLS_X509_CRT_PARSE_FAILED;
         }
 
+#ifdef CONFIG_MBEDTLS_V3
+        ret = mbedtls_pk_parse_key(pki->pk_key, pki->privkey_pem_buf, pki->privkey_pem_bytes,
+                                   pki->privkey_password, pki->privkey_password_len,
+                                   mbedtls_ctr_drbg_random, &tls->ctr_drbg);
+#else
         ret = mbedtls_pk_parse_key(pki->pk_key, pki->privkey_pem_buf, pki->privkey_pem_bytes,
                                    pki->privkey_password, pki->privkey_password_len);
+#endif
         if (ret < 0) {
             ESP_LOGE(TAG, "mbedtls_pk_parse_keyfile returned -0x%x", -ret);
             ESP_INT_EVENT_TRACKER_CAPTURE(tls->error_handle, ERR_TYPE_MBEDTLS, -ret);
@@ -383,6 +389,10 @@ esp_err_t set_client_config(const char *hostname, size_t hostlen, esp_tls_cfg_t 
             return ESP_ERR_MBEDTLS_SSL_SET_HOSTNAME_FAILED;
         }
         free(use_host);
+#ifdef CONFIG_MBEDTLS_V3
+    } else {
+         mbedtls_ssl_set_hostname(&tls->ssl, NULL);
+#endif
     }
 
     if ((ret = mbedtls_ssl_config_defaults(&tls->conf,
@@ -467,6 +477,11 @@ esp_err_t set_client_config(const char *hostname, size_t hostlen, esp_tls_cfg_t 
     } else if (cfg->clientcert_buf != NULL || cfg->clientkey_buf != NULL) {
         ESP_LOGE(TAG, "You have to provide both clientcert_buf and clientkey_buf for mutual authentication");
         return ESP_ERR_INVALID_STATE;
+    }
+
+    if (cfg->ciphersuites_list != NULL && cfg->ciphersuites_list[0] != 0) {
+        ESP_LOGD(TAG, "Set the ciphersuites list");
+        mbedtls_ssl_conf_ciphersuites(&tls->conf, cfg->ciphersuites_list);
     }
     return ESP_OK;
 }
@@ -563,4 +578,9 @@ void esp_mbedtls_free_global_ca_store(void)
         mbedtls_x509_crt_free(global_cacert);
         global_cacert = NULL;
     }
+}
+
+const int *esp_mbedtls_get_ciphersuites_list(void)
+{
+    return mbedtls_ssl_list_ciphersuites();
 }
